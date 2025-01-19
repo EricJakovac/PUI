@@ -1,79 +1,203 @@
-# First name Last name
-
-""" 
-Description of the agent (approach / strategy / implementation) in short points,
-fictional example / ideas:
-- It uses the knowledge base to remember:
-     - the position where the enemy was last seen,
-     - enemy flag positions,
-     - the way to its flag.
-- I use a machine learning model that, based on what the agent sees around it, decides:
-     - in which direction the agent should take a step (or stay in place),
-     - whether and in which direction to shoot.
-- One agent always stays close to the flag while the other agents are on the attack.
-- Agents communicate with each other:
-     - position of seen enemies and in which direction they are moving,
-     - the position of the enemy flag,
-     - agent's own position,
-     - agent's own condition (is it still alive, has it taken the enemy's flag, etc.)
-- Agents prefer to maintain a distance from each other (not too close and not too far).
-- etc...
-"""
-
+from config import ASCII_TILES  # Import the ASCII_TILES dictionary
+from movement import Movement
+from shooting import Shooting
 import random
-
-from config import *  # contains, amongst other variables, `ASCII_TILES` (which will probably be useful here)
-
+import heapq
 
 class Agent:
-
-    # called when this agent is instanced (at the beginning of the game)
+    
     def __init__(self, color, index):
         self.color = color  # "blue" or "red"
         self.index = index  # 0, 1, or 2
+        self.prev_direction = None
+        self.prev_position = None
+        self.stuck_count = 0
+        self.movement = Movement(color)
+        self.enemy_location = None
+        self.flag_location = None
+        self.shooting = Shooting()
+        self.starting_position = None
+        self.explored_positions = set()
+        self.has_flag = False
+        self.move_count = 0  # Track the number of moves for agent 1
 
-    # called every "agent frame"
+
     def update(self, visible_world, position, can_shoot, holding_flag):
-        # display one agent's vision:
-        """if self.index == 0:
-        print("\n===========================\n")
-        for row in visible_world:
-            print(" " + " ".join(row))"""
+        """
+        Decide the agent's action and direction every frame.
+        """
+        action = "move"
+        direction = "left"
 
-        ## below is a very random and extremely simple implementation for testing purposes
+        if self.index == 0:  # 1st agent moves normally
+            if self.starting_position is None:
+                self.starting_position = position
 
-        if can_shoot:
+            if self.has_flag:
+                # Use A* algorithm to find the shortest path to the goal
+                open_list = []
+                closed_list = set()
+                heapq.heappush(open_list, (0, position))
+                came_from = {}
+                cost_so_far = {position: 0}
+
+                while open_list:
+                    current = heapq.heappop(open_list)[1]
+                    if current == self.starting_position:
+                        break
+
+                    for neighbor in self.get_neighbors(visible_world, current):
+                        new_cost = cost_so_far[current] + 1
+                        if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                            cost_so_far[neighbor] = new_cost
+                            priority = new_cost + self.heuristic(neighbor, self.starting_position)
+                            heapq.heappush(open_list, (priority, neighbor))
+                            came_from[neighbor] = current
+
+                # Reconstruct the path
+                current = self.starting_position
+                path = []
+                while current != position:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(position)
+                path.reverse()
+
+                # Follow the path
+                direction = self.get_direction(path[0], path[1])
+            else:
+                if self.prev_direction == "left" and random.random() < 0.9:  # 90% chance of continuing to move left
+                    direction = "left"
+                elif self.prev_direction == "left" and random.random() < 0.1:  # 10% chance of moving up or down
+                    if random.random() < 0.5:  # 50% chance of moving up
+                        direction = "up"
+                    else:  # 50% chance of moving down
+                        direction = "down"
+                else:
+                    if random.random() < 0.9:  # 90% chance of moving left
+                        direction = "left"
+                    else:  # 10% chance of moving up or down
+                        if random.random() < 0.5:  # 50% chance of moving up
+                            direction = "up"
+                        else:  # 50% chance of moving down
+                            direction = "down"
+
+                # Check if the agent is about to hit a wall
+                x = position[0]
+                y = position[1]
+                if   direction == "right" and x + 1 >= len(visible_world[0]):
+                    direction = "left"
+                elif direction == "left" and x - 1 < 0:
+                    direction = "right"
+                elif direction == "up" and y - 1 < 0:
+                    direction = "down"
+                elif direction == "down" and y + 1 >= len(visible_world):
+                    direction = "up"
+
+                # Check if the agent is in a corner
+                if (direction == "left" and x - 1 < 0) or (direction == "right" and x + 1 >= len(visible_world[0])):
+                    if (direction == "up" and y - 1 < 0) or (direction == "down" and y + 1 >= len(visible_world)):
+                        # If the agent is in a corner, move back to the first position
+                        direction = "stay"
+                        self.prev_direction = None
+
+                # Check if the agent is stuck in a loop
+                if self.prev_position == position:
+                    self.stuck_count += 1
+                    if self.stuck_count > 5:
+                        # If the agent is stuck, try a different path
+                        direction = random.choice(["right", "left", "up", "down"])
+                        self.prev_direction = direction
+                        self.stuck_count = 0
+                        self.retrace_steps(visible_world, position)
+                else:
+                    self.stuck_count = 0
+
+                # Check if the agent is surrounded by walls on three sides
+                if (direction == "left" and x - 1 < 0) and (direction == "right" and x + 1 >= len(visible_world[0])):
+                    if (direction == "up" and y - 1 < 0) or (direction == "down" and y + 1 >= len(visible_world)):
+                        # If the agent is surrounded by walls on three sides, try to move up or down
+                        if random.random() < 0.5:  # 50% chance of moving up
+                            direction = "up"
+                        else:  # 50% chance of moving down
+                            direction = "down"
+
+                # Check if the agent can move up or down
+                if len(visible_world) > 0 and len(visible_world[0]) > 0:
+                    if y - 1 >= 0 and y - 1 < len(visible_world) and x < len(visible_world[0]) and visible_world[y - 1][x] not in [ASCII_TILES["wall"]]:
+                        if random.random() < 0.5:  # 50% chance of moving up
+                            direction = "up"
+                    if y + 1 < len(visible_world) and x < len(visible_world[0]) and visible_world[y + 1][x] not in [ASCII_TILES["wall"]]:
+                        if random.random() < 0.5:  # 50% chance of moving down
+                            direction = "down"
+
+                # Check if the agent has already explored this position
+                if position in self.explored_positions:
+                    # If the agent has already explored this position, try a different path
+                    direction = random.choice(["right", "left", "up", "down"])
+                    self.prev_direction = direction
+
+                # Add the current position to the explored positions
+                self.explored_positions.add(position)
+
+       
+        elif self.index==1 or self.index == 2:   # 2nd and 3rd agents stay at the flag and protect it
             action = "shoot"
-        elif random.random() > 0.3:
-            action = ""  # do nothing
-        else:
-            action = "move"
+            direction = random.choice(["right", "left", "up", "down"])
 
-        if self.color == "blue":
-            preferred_direction = "right"
-            if holding_flag:
-                preferred_direction = "left"
-        elif self.color == "red":
-            preferred_direction = "left"
-            if holding_flag:
-                preferred_direction = "right"
+        self.prev_position = position
+        self.prev_direction = direction
+        
+        return action, direction
 
-        r = random.random() * 1.5
-        if r < 0.25:
-            direction = "left"
-        elif r < 0.5:
-            direction = "right"
-        elif r < 0.75:
-            direction = "up"
-        elif r < 1.0:
-            direction = "down"
-        else:
-            direction = preferred_direction
+    def retrace_steps(self, visible_world, position):
+        """
+        Retrace the agent's steps to the starting position.
+        """
+        action = "move"
+        direction = "stay"
+        
+        x, y = position
+        while (x, y) != self.starting_position:
+            if x > self.starting_position[0]:
+                x -= 1
+            elif x < self.starting_position[0]:
+                x += 1
+            elif y > self.starting_position[1]:
+                y -= 1
+            elif y < self.starting_position[1]:
+                y += 1
+            position = (x, y)
+            self.prev_position = position
 
         return action, direction
 
-    # called when this agent is deleted (either because this agent died, or because the game is over)
-    # `reason` can be "died" or if the game is over "blue", "red", or "tied" depending on who won
+    def get_neighbors(self, visible_world, position):
+        neighbors = []
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            x, y = position[0] + dx, position[1] + dy
+            if 0 <= x < len(visible_world[0]) and 0 <= y < len(visible_world):
+                neighbors.append((x, y))
+        return neighbors
+
+    def heuristic(self, position, goal):
+        return abs(position[0] - goal[0]) + abs(position[1] - goal[1])
+
+    def get_direction(self, position1, position2):
+        dx = position2[0] - position1[0]
+        dy = position2[1] - position1[1]
+        if dx > 0:
+            return "right"
+        elif dx < 0:
+            return "left"
+        elif dy > 0:
+            return "down"
+        elif dy < 0:
+            return "up"
+
     def terminate(self, reason):
         if reason == "died":
+            self.has_flag = False  # Reset flag status if the agent dies
             print(self.color, self.index, "died")
+        else:
+            print(self.color, self.index, "terminated due to:", reason)
