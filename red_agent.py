@@ -19,8 +19,6 @@ class Agent:
         self.starting_position = None
         self.explored_positions = set()
         self.has_flag = False
-        self.move_count = 0  # Track the number of moves for agent 1
-
 
     def update(self, visible_world, position, can_shoot, holding_flag):
         """
@@ -74,13 +72,10 @@ class Agent:
                     else:  # 50% chance of moving down
                         direction = "down"
                 else:
-                    if random.random() < 0.9:  # 90% chance of moving left
-                        direction = "left"
-                    else:  # 10% chance of moving up or down
-                        if random.random() < 0.5:  # 50% chance of moving up
-                            direction = "up"
-                        else:  # 50% chance of moving down
-                            direction = "down"
+                    if random.random() < 0.5:  # 50% chance of moving up
+                        direction = "up"
+                    else:  # 50% chance of moving down
+                        direction = "down"
 
                 # Check if the agent is about to hit a wall
                 x = position[0]
@@ -139,11 +134,19 @@ class Agent:
 
                 # Add the current position to the explored positions
                 self.explored_positions.add(position)
+                
 
-       
-        elif self.index==1 or self.index == 2:   # 2nd and 3rd agents stay at the flag and protect it
+        elif self.index == 1 or self.index == 2:  # 2nd and 3rd agents stay at the flag and protect it
             action = "shoot"
             direction = random.choice(["right", "left", "up", "down"])
+
+            # Check if there is an enemy agent in the visible world
+            for y in range(len(visible_world)):
+                for x in range(len(visible_world[0])):
+                    if visible_world[y][x] == 'b':
+                        # If there is an enemy agent, shoot at it
+                        direction = self.get_direction(position, (x, y))
+                        break
 
         self.prev_position = position
         self.prev_direction = direction
